@@ -1,0 +1,241 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: workflow-template-niconama-rec
+spec:
+  entrypoint: niconama-rec-steps-template
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  serviceAccountName: executor-workflow-sa
+  arguments:
+    parameters:
+    - name: page-url
+  templates:
+  - name: niconama-rec-steps-template
+    steps:
+    - - name: session
+        template: niconico-session-template
+    - - name: lv-page
+        templateRef:
+          name: workflow-template-niconama-page
+          template: niconama-page-template
+        arguments:
+          artifacts:
+          - name: html
+            http:
+              headers:
+                - name: Cookie
+                  value: "user_session={{steps.session.outputs.parameters.session}}"
+              url: "{{workflow.parameters.page-url}}"
+    - - name: co-page
+        templateRef:
+          name: workflow-template-niconico-community-page
+          template: niconico-community-page-template
+        arguments:
+          parameters:
+          - name: coid
+            value: "{{steps.lv-page.outputs.parameters.coid}}"
+          - name: coids
+            value: "{{steps.session.outputs.parameters.coids}}"
+          artifacts:
+          - name: html
+            http:
+              headers:
+                - name: Cookie
+                  value: "user_session={{steps.session.outputs.parameters.session}}"
+              url: "https://com.nicovideo.jp/community/{{steps.lv-page.outputs.parameters.coid}}"
+    - - name: niconama-recorder
+        templateRef:
+          name: workflow-template-niconama-recorder
+          template: niconama-recorder-template
+        when: "{{steps.co-page.outputs.parameters.rec}} == True"
+        arguments:
+          parameters:
+          - name: lvid
+            value: "{{steps.lv-page.outputs.parameters.lvid}}"
+          - name: session
+            value: "{{steps.session.outputs.parameters.session}}"
+    - - name: niconama-save-file
+        templateRef:
+          name: workflow-template-niconama-save-file
+          template: niconama-save-file-template
+        when: "{{steps.co-page.outputs.parameters.rec}} == True"
+        arguments:
+          parameters:
+          - name: title
+            value: "{{steps.lv-page.outputs.parameters.title}}"
+          - name: community
+            value: "{{steps.co-page.outputs.parameters.community}}"
+          artifacts:
+          - name: video
+            from: "{{steps.niconama-recorder.outputs.artifacts.video}}"
+  - name: niconico-session-template
+    script:
+      image: alpine:latest
+      command: [sh, -c]
+      args: ["echo -n $SESSION > /tmp/user_session.txt && echo -n $COMMUNITY_IDS > /tmp/community_ids.txt"]
+      envFrom:
+      - configMapRef:
+          name: niconico-conf
+    outputs:
+      parameters:
+      - name: session
+        valueFrom:
+          path: /tmp/user_session.txt
+      - name: coids
+        valueFrom:
+          path: /tmp/community_ids.txt
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: workflow-template-niconama-page
+spec:
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  serviceAccountName: executor-workflow-sa
+  templates:
+  - name: niconama-page-template
+    inputs:
+      artifacts:
+      - name: html
+        path: /tmp/watch.html
+    script:
+      image: python:alpine3.6
+      command: [python]
+      source: |
+        import os
+        import re
+        with open('/tmp/watch.html', 'r') as file:
+          html = file.read()
+          # タイトル（日時をフォーマット）
+          m = re.search(r'<title>(.*)</title>', html)
+          title = m.group(1)
+          date = re.search(r'\d{4}/\d{1,2}/\d{1,2}', title).group(0)
+          formatted_date = '-'.join(map(lambda n: n if len(n) > 1 else f'{n:0>2}', date.split('/')))
+          time = re.search(r'\d{1,2}:\d{1,2}', title).group(0)
+          formatted_time = ':'.join(map(lambda n: n if len(n) > 1 else f'{n:0>2}', time.split(':')))
+          title = title.replace(date, formatted_date).replace(time, formatted_time)
+          os.system(f'echo -n "{title}" > /tmp/title.txt')
+          # LvID
+          m = re.search(r'https://live.nicovideo.jp/watch/(lv\d+)', html)
+          os.system(f'echo -n {m.group(1)} > /tmp/lvid.txt')
+          # コミュニティID
+          m = re.search(r'https://com.nicovideo.jp/community/(co\d+)', html)
+          coid = m.group(1)
+          os.system(f'echo -n {coid} > /tmp/coid.txt')
+    outputs:
+      parameters:
+      - name: title
+        valueFrom:
+          path: /tmp/title.txt
+      - name: lvid
+        valueFrom:
+          path: /tmp/lvid.txt
+      - name: coid
+        valueFrom:
+          path: /tmp/coid.txt
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: workflow-template-niconico-community-page
+spec:
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  serviceAccountName: executor-workflow-sa
+  templates:
+  - name: niconico-community-page-template
+    inputs:
+      parameters:
+      - name: coid
+      - name: coids
+      artifacts:
+      - name: html
+        path: /tmp/community.html
+    script:
+      image: python:alpine3.6
+      command: [python]
+      source: |
+        import os
+        import re
+        with open('/tmp/community.html', 'r') as file:
+          html = file.read()
+          m = re.search(r'<meta property="og:title" content="(.*)-ニコニコミュニティ">', html)
+          community_name = m.group(1).replace('/', '-')
+          os.system(f'echo -n "{community_name}" > /tmp/community.txt')
+          m = re.search(r'https://com.nicovideo.jp/community/(co\d+)', html)
+          coid = "{{inputs.parameters.coid}}"
+          coids = "{{inputs.parameters.coids}}".split(',')
+          print(coid)
+          os.system(f'echo -n {coid in coids} > /tmp/rec.txt')
+    outputs:
+      parameters:
+      - name: community
+        valueFrom:
+          path: /tmp/community.txt
+      - name: rec
+        valueFrom:
+          path: /tmp/rec.txt
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: workflow-template-niconama-recorder
+spec:
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  serviceAccountName: executor-workflow-sa
+  templates:
+  - name: niconama-recorder-template
+    inputs:
+      parameters:
+      - name: lvid
+      - name: session
+    container:
+      image: ghcr.io/genkaieng/niconama-recorder:latest
+      args: ["{{inputs.parameters.lvid}}"]
+      env:
+      - name: TZ
+        value: "Asia/Tokyo"
+      - name: SESSION
+        value: "{{inputs.parameters.session}}"
+    outputs:
+      artifacts:
+      - name: video
+        path: "/app/output/{{inputs.parameters.lvid}}.mp4"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: workflow-template-niconama-save-file
+spec:
+  ttlStrategy:
+    secondsAfterCompletion: 300
+  serviceAccountName: executor-workflow-sa
+  templates:
+  - name: niconama-save-file-template
+    inputs:
+      parameters:
+      - name: title
+      - name: community
+      artifacts:
+      - name: video
+        path: /tmp/video.mp4
+    container:
+      image: minio/mc
+      command: [sh, -c]
+      args: ["mc alias set minio http://my-release-minio:9000 $MINIO_ACCESS_KEY $MINIO_SECRET_KEY && mc cp /tmp/video.mp4 \"$OUTPUT\""]
+      env:
+      - name: OUTPUT
+        value: "minio/niconama/{{inputs.parameters.community}}/{{inputs.parameters.title}}.mp4"
+      - name: MINIO_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-credentials
+            key: accesskey
+      - name: MINIO_SECRET_KEY
+        valueFrom:
+          secretKeyRef:
+            name: minio-credentials
+            key: secretkey

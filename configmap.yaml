@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nicopush-subscriber-conf
+data:
+  # `docker run ghcr.io/genkaieng/nicopush-subscriber:v0.1.0 ./genkeys` で出力されるキーを設定
+  PUBLIC_KEY: ""
+  PRIVATE_KEY: ""
+  AUTH: ""
+  CHANNEL_ID: ""
+  # niconico-subscriberのログに出力されるUAIDを設定（オプション）
+  UAID: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: niconico-conf
+data:
+  TZ: "Asia/Tokyo"
+  # ブラウザのCookieに保存されているuser_sessionの値
+  SESSION: "user_session_xxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  # 自動録画するコミュニティIDを指定。（`,`繋ぎで複数指定可能）
+  # 例) "co0000001,co0000002,co0000003"
+  COMMUNITY_IDS: ""

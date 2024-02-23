@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nicopush-subscriber
+  labels:
+    app: nicopush-subscriber
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nicopush-subscriber
+  template:
+    metadata:
+      labels:
+        app: nicopush-subscriber
+    spec:
+      containers:
+      - name: nicopush-subscriber
+        image: ghcr.io/genkaieng/nicopush-subscriber:v0.1.0
+        command: ["/bin/sh", "-c"]
+        args: ["./subscribe 2>&1 | tee /var/log/app.log"]
+        envFrom:
+        - configMapRef:
+            name: nicopush-subscriber-conf
+        - configMapRef:
+            name: niconico-conf
+        volumeMounts:
+        - name: log
+          mountPath: /var/log
+
+      - name: fluent-bit
+        image: cr.fluentbit.io/fluent/fluent-bit:latest
+        volumeMounts:
+        - name: fluent-bit-conf
+          mountPath: /fluent-bit/etc/
+          readOnly: true
+        - name: log
+          mountPath: /var/log
+          readOnly: true
+
+      volumes:
+      - name: log
+        emptyDir: {}
+      - name: fluent-bit-conf
+        configMap:
+          name: fluent-bit-conf
+---
+# Fluent Bitのconf
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-conf
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Daemon        off
+        log_level     trace
+        Parsers_File  /fluent-bit/etc/parsers.conf
+    [INPUT]
+        Name          tail
+        Path          /var/log/app.log
+        Parser        nicopush_log
+    [FILTER]
+        Name          grep
+        Match         *
+        Regex         tag notification
+    [OUTPUT]
+        Name          kafka
+        Match         *
+        Brokers       my-release-kafka:9092
+        Topics        nicopush
+        Timestamp_Key time
+  parsers.conf: |
+    [PARSER]
+        Name            nicopush_log
+        Format          regex
+        Regex           ^(?<time>[^ ]+ [^ ]+) (?<level>\w+) (?<tag>[^ ]+) (?<message>{[\s\S]*})
+        Time_Key        time
+        Time_Format     %Y/%m/%d %H:%M:%S
+        Decode_Field_As json message

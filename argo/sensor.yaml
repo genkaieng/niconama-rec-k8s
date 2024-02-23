@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: kafka
+spec:
+  template:
+    serviceAccountName: operate-workflow-sa
+  dependencies:
+    - name: kafka-nicopush
+      eventSourceName: kafka
+      eventName: nicopush
+  triggers:
+    - template:
+        name: kafka-nicopush-workflow-trigger
+        k8s:
+          operation: create
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: kafka-nicopush-workflow-
+              spec:
+                artifactGC:
+                  strategy: OnWorkflowCompletion
+                ttlStrategy:
+                  secondsAfterCompletion: 300
+                arguments:
+                  parameters:
+                    - name: page-url
+                workflowTemplateRef:
+                  name: workflow-template-niconama-rec
+          parameters:
+            - src:
+                dependencyName: kafka-nicopush
+                dataKey: body.message.data.on_click
+              dest: spec.arguments.parameters.0.value
