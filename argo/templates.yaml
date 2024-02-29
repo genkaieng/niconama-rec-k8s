@@ -4,8 +4,6 @@ metadata:
   name: workflow-template-niconama-rec
 spec:
   entrypoint: niconama-rec-steps-template
-  ttlStrategy:
-    secondsAfterCompletion: 300
   serviceAccountName: executor-workflow-sa
   arguments:
     parameters:
@@ -55,20 +53,10 @@ spec:
             value: "{{steps.lv-page.outputs.parameters.lvid}}"
           - name: session
             value: "{{steps.session.outputs.parameters.session}}"
-    - - name: niconama-save-file
-        templateRef:
-          name: workflow-template-niconama-save-file
-          template: niconama-save-file-template
-        when: "{{steps.co-page.outputs.parameters.rec}} == True"
-        arguments:
-          parameters:
           - name: title
             value: "{{steps.lv-page.outputs.parameters.title}}"
           - name: community
             value: "{{steps.co-page.outputs.parameters.community}}"
-          artifacts:
-          - name: video
-            from: "{{steps.niconama-recorder.outputs.artifacts.video}}"
   - name: niconico-session-template
     script:
       image: alpine:latest
@@ -91,8 +79,6 @@ kind: WorkflowTemplate
 metadata:
   name: workflow-template-niconama-page
 spec:
-  ttlStrategy:
-    secondsAfterCompletion: 300
   serviceAccountName: executor-workflow-sa
   templates:
   - name: niconama-page-template
@@ -141,8 +127,6 @@ kind: WorkflowTemplate
 metadata:
   name: workflow-template-niconico-community-page
 spec:
-  ttlStrategy:
-    secondsAfterCompletion: 300
   serviceAccountName: executor-workflow-sa
   templates:
   - name: niconico-community-page-template
@@ -183,8 +167,6 @@ kind: WorkflowTemplate
 metadata:
   name: workflow-template-niconama-recorder
 spec:
-  ttlStrategy:
-    secondsAfterCompletion: 300
   serviceAccountName: executor-workflow-sa
   templates:
   - name: niconama-recorder-template
@@ -192,6 +174,8 @@ spec:
       parameters:
       - name: lvid
       - name: session
+      - name: title
+      - name: community
     container:
       image: ghcr.io/genkaieng/niconama-recorder:latest
       args: ["{{inputs.parameters.lvid}}"]
@@ -204,38 +188,9 @@ spec:
       artifacts:
       - name: video
         path: "/app/output/{{inputs.parameters.lvid}}.mp4"
----
-apiVersion: argoproj.io/v1alpha1
-kind: WorkflowTemplate
-metadata:
-  name: workflow-template-niconama-save-file
-spec:
-  ttlStrategy:
-    secondsAfterCompletion: 300
-  serviceAccountName: executor-workflow-sa
-  templates:
-  - name: niconama-save-file-template
-    inputs:
-      parameters:
-      - name: title
-      - name: community
-      artifacts:
-      - name: video
-        path: /tmp/video.mp4
-    container:
-      image: minio/mc
-      command: [sh, -c]
-      args: ["mc alias set minio http://my-release-minio:9000 $MINIO_ACCESS_KEY $MINIO_SECRET_KEY && mc cp /tmp/video.mp4 \"$OUTPUT\""]
-      env:
-      - name: OUTPUT
-        value: "minio/niconama/{{inputs.parameters.community}}/{{inputs.parameters.title}}.mp4"
-      - name: MINIO_ACCESS_KEY
-        valueFrom:
-          secretKeyRef:
-            name: minio-credentials
-            key: accesskey
-      - name: MINIO_SECRET_KEY
-        valueFrom:
-          secretKeyRef:
-            name: minio-credentials
-            key: secretkey
+        archive:
+          none: {}
+        s3:
+          key: "niconico/{{inputs.parameters.community}}/{{inputs.parameters.title}}.mp4"
+        artifactGC:
+          strategy: Never

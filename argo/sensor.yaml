@@ -23,8 +23,6 @@ spec:
               spec:
                 artifactGC:
                   strategy: OnWorkflowCompletion
-                ttlStrategy:
-                  secondsAfterCompletion: 300
                 arguments:
                   parameters:
                     - name: page-url
